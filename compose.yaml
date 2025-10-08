@@ -6,3 +6,11 @@ services:
     container_name: auth-service
     ports:
       - "8008:8000"
+    networks:
+      - service-network
+
+# To connect to the other services (in different compose files)
+# docker network create service-network
+networks:
+  service-network:
+    external: true
