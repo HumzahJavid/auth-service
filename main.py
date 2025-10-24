@@ -15,6 +15,10 @@ class TokenRequest(BaseModel):
     access_token: str
 
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
 KC_ROOT_URL = str(os.environ.get("KC_HOST", "http://localhost"))
 KC_PORT = str(os.environ.get("KC_PORT", "8080"))
 KC_REALM = str(os.environ.get("KC_REALM", "UKAEA"))
@@ -110,7 +114,7 @@ def verify_token(request: TokenRequest):
             access_token,
             signing_key.key,
             algorithms=["RS256"],
-            issuer="http://localhost:8080/realms/UKAEA",
+            issuer="http://localhost:{KC_PORT}/realms/{KC_REALM}",
             aud="confidential-client",
             options={"verify_aud": False},  # temporary insecure bypass
         )
@@ -119,7 +123,20 @@ def verify_token(request: TokenRequest):
     return payload
 
 
-# add refresh token
+# TODO add logic for refreshing after expiration
+@BACKEND_ROUTER.post("/refresh")
+def refresh_token(refresh_request: RefreshTokenRequest):
+    response = requests.post(
+        url=f"{OIDC_BASE_URL}/token",
+        data={
+            "grant_type": "refresh_token",
+            "client_id": "confidential-client",
+            "client_secret": SECRET_KEY,
+            "refresh_token": refresh_request.refresh_token,
+        },
+    )
+    return response.json()
+
 
 app.include_router(ROUTER)
 app.include_router(BACKEND_ROUTER)
