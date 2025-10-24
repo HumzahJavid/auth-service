@@ -1,7 +1,7 @@
 FROM python:3.13
 
 WORKDIR /auth-service
-COPY main.py pyproject.toml /auth-service
+COPY main.py pyproject.toml auth.env /auth-service
 
 RUN python --version
 RUN pip install --upgrade pip

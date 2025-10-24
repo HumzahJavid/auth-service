@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: auth-service
+    env_file: "auth.env"
     ports:
       - "8008:8000"
     networks:

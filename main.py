@@ -1,17 +1,27 @@
 from __future__ import annotations
 
-from typing import Annotated
+import os
 
-import jwt
+import requests
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.security import OAuth2AuthorizationCodeBearer
-from jwt import PyJWKClient  # from pyjwt
+from jwt import PyJWKClient, decode  # from pyjwt
+from jwt.exceptions import ExpiredSignatureError
+from pydantic import BaseModel
 
-KC_ROOT_URL = "http://localhost"
-KC_PORT = "8080"
-KC_REALM = "UKAEA"
+
+class TokenRequest(BaseModel):
+    access_token: str
+
+
+KC_ROOT_URL = str(os.environ.get("KC_HOST", "http://localhost"))
+KC_PORT = str(os.environ.get("KC_PORT", "8080"))
+KC_REALM = str(os.environ.get("KC_REALM", "UKAEA"))
 OIDC_BASE_URL = f"{KC_ROOT_URL}:{KC_PORT}/realms/{KC_REALM}/protocol/openid-connect"
+# For the test client
+SECRET_KEY = str(os.environ.get("SECRET_KEY"))
+JWKS_URL = f"{OIDC_BASE_URL}/certs"
 
 app = FastAPI()
 
@@ -34,24 +44,6 @@ oauth_2_scheme = OAuth2AuthorizationCodeBearer(
 )
 
 
-async def valid_access_token(access_token: Annotated[str, Depends(oauth_2_scheme)]):
-    url = f"{OIDC_BASE_URL}/certs"
-    optional_custom_headers = {"User-agent": "custom-user-agent"}
-    jwks_client = PyJWKClient(url, headers=optional_custom_headers)
-    try:
-        signing_key = jwks_client.get_signing_key_from_jwt(access_token)
-        data = jwt.decode(
-            access_token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience="confidential-client",
-            options={"verify_exp": True},
-        )
-        return data
-    except jwt.exceptions.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-
 # initial test route which needs auth to view contents
 @ROUTER.get("/private", dependencies=[Depends(oauth_2_scheme)])
 def read_item():
@@ -63,8 +55,77 @@ def get_public():
     return {"message": "This endpoint is public"}
 
 
+USER_ROUTER = APIRouter(tags=["User Auth routes"])
+
+
+@USER_ROUTER.post("/auth-user-pass")
+def user_auth(username="sample-user", password="sample-password"):
+    token_response = requests.post(
+        url=f"{OIDC_BASE_URL}/token",
+        data={
+            "grant_type": "password",
+            "client_id": "confidential-client",
+            "client_secret": SECRET_KEY,
+            "username": username,
+            "password": password,
+        },
+    )
+    # access_token = token_response.json()["access_token"]
+    access_token = token_response.json()
+    return access_token
+
+
+BACKEND_ROUTER = APIRouter(tags=["Service-Service (non human account) Auth routes"])
+
+
+@BACKEND_ROUTER.post("/auth")
+def test_auth():
+    token_response = requests.post(
+        url=f"{OIDC_BASE_URL}/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "confidential-client",
+            "client_secret": SECRET_KEY,
+        },
+    )
+    # access_token = token_response.json()["access_token"]
+    access_token = token_response.json()
+    return access_token
+
+
+@BACKEND_ROUTER.post("/verify")
+def verify_token(request: TokenRequest):
+    """
+    Verify that the JWT token can be decoded using the client credentials.
+
+    :param access_token:
+    :return: True or False (temporarily the payload itself)
+    """
+    access_token = request.access_token
+    jwks_client = PyJWKClient(JWKS_URL)
+    signing_key = jwks_client.get_signing_key_from_jwt(access_token)
+
+    try:
+        payload = decode(
+            access_token,
+            signing_key.key,
+            algorithms=["RS256"],
+            issuer="http://localhost:8080/realms/UKAEA",
+            aud="confidential-client",
+            options={"verify_aud": False},  # temporary insecure bypass
+        )
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="The access token has expired.")
+    return payload
+
+
+# add refresh token
+
 app.include_router(ROUTER)
+app.include_router(BACKEND_ROUTER)
+app.include_router(USER_ROUTER)
 
 # uv run fastapi run --port 8008
 if __name__ == "__main__":
     uvicorn.run("main:app", port=8000, reload=True, access_log=False)
+    # use lifetime to ingest config
