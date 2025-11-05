@@ -36,6 +36,7 @@ app = FastAPI()
 ROUTER = APIRouter(tags=["example AUTH routes"])
 USER_ROUTER = APIRouter(tags=["User Auth routes"])
 BACKEND_ROUTER = APIRouter(tags=["Service-Service (non human account) Auth routes"])
+OPENID_ROUTER = APIRouter(tags=["Routes with Openid in scope for userinfo"])
 
 
 @ROUTER.get("/")
@@ -139,9 +140,53 @@ def refresh_token(refresh_request: RefreshTokenRequest):
     return response.json()
 
 
+@OPENID_ROUTER.post("/auth-user-openid")
+def user_auth_openid(username="sample-user", password="sample-password"):
+    token_response = requests.post(
+        url=f"{OIDC_BASE_URL}/token",
+        data={
+            "grant_type": "password",
+            "client_id": "confidential-client",
+            "client_secret": SECRET_KEY,
+            "username": username,
+            "password": password,
+            "scope": "openid",
+        },
+    )
+    access_token = token_response.json()
+    return access_token
+
+
+@OPENID_ROUTER.post("/auth-openid")
+def auth_openid():
+    token_response = requests.post(
+        url=f"{OIDC_BASE_URL}/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "confidential-client",
+            "client_secret": SECRET_KEY,
+            "scope": "openid",
+        },
+    )
+    access_token = token_response.json()
+    return access_token
+
+
+@OPENID_ROUTER.post("/verify-openID")
+def verify_token_openid(request: TokenRequest):
+    response = requests.get(
+        url=f"{OIDC_BASE_URL}/userinfo",
+        headers={
+            "Authorization": f"Bearer {request.access_token}",
+        },
+    )
+    return response.json()
+
+
 app.include_router(ROUTER)
 app.include_router(BACKEND_ROUTER)
 app.include_router(USER_ROUTER)
+app.include_router(OPENID_ROUTER)
 
 # uv run fastapi run --port 8008
 if __name__ == "__main__":
