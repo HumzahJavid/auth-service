@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+from typing import Any, Dict
 
 import requests
 import uvicorn
@@ -9,6 +11,8 @@ from fastapi.security import OAuth2AuthorizationCodeBearer
 from jwt import PyJWKClient, decode  # from pyjwt
 from jwt.exceptions import ExpiredSignatureError
 from pydantic import BaseModel
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class TokenRequest(BaseModel):
@@ -30,6 +34,8 @@ JWKS_URL = f"{OIDC_BASE_URL}/certs"
 app = FastAPI()
 
 ROUTER = APIRouter(tags=["example AUTH routes"])
+USER_ROUTER = APIRouter(tags=["User Auth routes"])
+BACKEND_ROUTER = APIRouter(tags=["Service-Service (non human account) Auth routes"])
 
 
 @ROUTER.get("/")
@@ -59,9 +65,6 @@ def get_public():
     return {"message": "This endpoint is public"}
 
 
-USER_ROUTER = APIRouter(tags=["User Auth routes"])
-
-
 @USER_ROUTER.post("/auth-user-pass")
 def user_auth(username="sample-user", password="sample-password"):
     token_response = requests.post(
@@ -74,16 +77,12 @@ def user_auth(username="sample-user", password="sample-password"):
             "password": password,
         },
     )
-    # access_token = token_response.json()["access_token"]
     access_token = token_response.json()
     return access_token
 
 
-BACKEND_ROUTER = APIRouter(tags=["Service-Service (non human account) Auth routes"])
-
-
 @BACKEND_ROUTER.post("/auth")
-def test_auth():
+def auth():
     token_response = requests.post(
         url=f"{OIDC_BASE_URL}/token",
         data={
@@ -92,32 +91,34 @@ def test_auth():
             "client_secret": SECRET_KEY,
         },
     )
-    # access_token = token_response.json()["access_token"]
     access_token = token_response.json()
     return access_token
 
 
+# Temporarily not using TokenRequest
 @BACKEND_ROUTER.post("/verify")
-def verify_token(request: TokenRequest):
+def verify_token(request: Dict[Any, Any]):
     """
     Verify that the JWT token can be decoded using the client credentials.
 
     :param access_token:
     :return: True or False (temporarily the payload itself)
     """
-    access_token = request.access_token
+    access_token = request["access_token"]
     jwks_client = PyJWKClient(JWKS_URL)
     signing_key = jwks_client.get_signing_key_from_jwt(access_token)
-
+    logger.warning("Decoding token without issuer or verifying audience")
     try:
         payload = decode(
             access_token,
             signing_key.key,
             algorithms=["RS256"],
-            issuer="http://localhost:{KC_PORT}/realms/{KC_REALM}",
+            # invalid issuer
+            # issuer="http://{KC_ROOT_URL}:{KC_PORT}/realms/{KC_REALM}",
             aud="confidential-client",
             options={"verify_aud": False},  # temporary insecure bypass
         )
+        logger.debug(f"The decoded token {payload}")
     except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="The access token has expired.")
     return payload
@@ -145,4 +146,4 @@ app.include_router(USER_ROUTER)
 # uv run fastapi run --port 8008
 if __name__ == "__main__":
     uvicorn.run("main:app", port=8000, reload=True, access_log=False)
-    # use lifetime to ingest config
+    uvicorn.run("main:app", port=8000, reload=True, use_colors=True)
